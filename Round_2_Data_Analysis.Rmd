@@ -1,0 +1,687 @@
+---
+title: "Written Exams - DeMarco - Aug 2022"
+output:
+  html_document:
+    df_print: paged
+---
+Data: Provided from ICPSR_36873-V5 as '36873-0001-Data.rda'
+Codebook: 38673-0001-Codebook.pdf
+Homepage of study site: https://www.icpsr.umich.edu/web/ICPSR/studies/36873
+
+Research Question:
+Among older adult respondents to the NSHAP, do frequent anxiety and depression symptoms impact the severity of functional limitations in activities of daily living and instrumental activities of daily living?
+
+Packages required include:
+Tidyverse, tableone, survey, ggsurvey, extrafont, prettyR, svyVGAM
+```{r Load packages}
+# Create a list of required packages
+packages <- c("tidyverse", "tableone", "survey", "ggsurvey", "extrafont", "prettyR", "svyVGAM", "jtools")
+
+# Load the required packages
+purrr::walk(packages, library, character.only = T)
+
+# Display citations for the required packages
+for (package in packages){
+  print(citation(package = package))}
+```
+
+```{r Load data}
+load(file = "C:\\Users\\samzo\\Downloads\\ICPSR_34921-V5\\ICPSR_34921\\DS0001\\34921-0001-Data.rda")
+```
+
+The "factor_to_numeric_icpsr.R" script file provides the necessary code to turn the factor variables into a numeric variable. This is turned into a function for use in the present analysis.
+```{r Factor to Numeric}
+fac_to_numeric <- function(dfvar){
+  lbls <- sort(levels(dfvar))
+  lbls <- (sub("^\\([0-9]+\\) +(.+$)", "\\1", lbls))
+  newvar <- as.numeric(sub("^\\(0*([0-9]+)\\).+$", "\\1", dfvar))
+  newvar <- add.value.labels(newvar, lbls)
+  return(newvar)
+}
+```
+
+Testing the new function to see if it works with tidyverse
+```{r testing new function}
+testdf <- da34921.0001 %>%
+  mutate(PrepMealRecode = fac_to_numeric(PREPMEAL))%>%
+  select(PrepMealRecode)
+summary(testdf)
+```
+
+The study sample will be limited to those who responded to both the frequent anxiety symptoms and frequent depression symptoms measures, had documented responses for both the ADL and IADL measures, and could do each ADL/IADL at some point (a.k.a. did not volunteer "have never done" for any activity).
+
+The exposure of interest is a composite measure of mental health with 4 levels - those with neither frequent anxiety symptoms nor frequent depressive symptoms, those with frequent anxiety symptoms in the absence of frequent depressive symptoms, those with frequent depressive symptoms in the absence of frequent anxiety symptoms, and those with both frequent anxiety and depressive symptoms. 
+
+The primary outcome of interest is functional ability as measured by the severity of difficulty with activities of daily living and instrumental activities of daily living (Cheung, 2021). Severity was assessed at 4 levels - no difficulty (0), some difficulty (1), much difficulty (2), and unable to do (3). A higher score indicates greater difficulty with ADLs and IADLs.
+
+Secondary outcomes include the count of ADLs and IADLs with which a respondent requires assistance and a composite variable of the type of assistance needed (none, IADL only, ADL only, both IADL and ADL). Previously published scales for the NSHAP ADL and IADL data (Huisingh-Scheetz, 2014) will be used. [NOTE: this is actually backwards from the scale used and instead is better described as assessing/finding individuals with any limitation] A point is awarded for any level of difficulty with each of 7 key activities of daily living (walking a block, walking across the room, dressing, bathing, eating, transferring in and out of bed, and toileting) and 8 instrumental activities of daily living (preparing meals, taking medication, managing money, shopping for food, performing light housework, using a telephone, driving during the day, and driving at night). 
+
+Covariates include self-perceived physical health, number of comorbidities (count of those assessed by NSHAP), presence of health insurance, age gender, income, marital status, and education.
+
+An analytic data set is created with the necessary variables.
+```{r Clean Data}
+
+
+analyticNSHAP <- da34921.0001 %>%
+  # Change depressive symptoms to numeric for ease of analysis
+  mutate(noteat = fac_to_numeric(NOTEAT))%>%
+  mutate(feltdep = fac_to_numeric(FLTDEP))%>%
+  mutate(felteff = fac_to_numeric(FLTEFF))%>%
+  mutate(nosleep = fac_to_numeric(NOSLEEP))%>%
+  mutate(washappy = fac_to_numeric(WASHAPY))%>%
+  mutate(waslonely = fac_to_numeric(WASLONLY))%>%
+  mutate(unfriend = fac_to_numeric(UNFRIEND))%>%
+  mutate(enjlife = fac_to_numeric(ENJLIFE))%>%
+  mutate(feltsad = fac_to_numeric(FLTSAD))%>%
+  mutate(disliked = fac_to_numeric(DISLIKD))%>%
+  mutate(notgetgo = fac_to_numeric(NOTGETGO))%>%
+  # Change anxiety symptoms to numeric for ease of analysis
+  mutate(felttens = fac_to_numeric(FLTTENS))%>%
+  mutate(fright = fac_to_numeric(FRIGHT))%>%
+  mutate(worry = fac_to_numeric(WORRY))%>%
+  mutate(relaxed = fac_to_numeric(RELAXED))%>%
+  mutate(butterfly = fac_to_numeric(BUTRFLY))%>%
+  mutate(restless = fac_to_numeric(RESTLES))%>%
+  mutate(panic = fac_to_numeric(PANIC))%>%
+  # Change comorbidities to numeric for ease of analysis
+  mutate(htn = fac_to_numeric(CONDITNS_6))%>%
+  mutate(arthritis = fac_to_numeric(ARTHRITIS))%>%
+  mutate(heartcond = fac_to_numeric(HRTPROB2))%>%
+  mutate(cancer = fac_to_numeric(OTHCAN))%>%
+  mutate(diabetes = fac_to_numeric(CONDITNS_7))%>%
+  mutate(lung = fac_to_numeric(EMPHASTH))%>%
+  mutate(stroke = fac_to_numeric(STROKE))%>%
+  mutate(cognition = fac_to_numeric(DEMENTIA))%>%
+  # Create a summary variable for number of comorbidities
+  mutate(comorbid = htn+arthritis+heartcond+ cancer+ diabetes+lung+stroke+cognition)%>%
+  # Select necessary variables
+  select(ID, WEIGHT_ADJ, STRATUM, CLUSTER, AGE, GENDER, ETHGRP, EDUC, MARITLST, PHYSHLTH, comorbid,
+         MNTLHLTH, HAPPY, HEARN_RECODE, OTHERINSUR, 
+         WALKBLK, WALKBLOCK_HELP, WALKROOM, WALKROOM_HELP, DRESSING, DRESS_HELP, BATHING, BATH_HELP,
+         EATING, EATING_HELP, INOUTBED, GETBED_HELP, TOILET, TOILET_HELP, PREPMEAL, TAKEMEDS, MANAGEMONEY, SHOPFOOD, LIGHTWORK, USETELEP, DRIVED2, DRIVEN2, noteat, feltdep, felteff,
+         nosleep, washappy, waslonely, unfriend, enjlife, feltsad, disliked, notgetgo, felttens, 
+         fright, worry, relaxed, butterfly, restless, panic)
+```
+
+
+Primary outcome is severity of functional limitation as measured by difficulty with ADLs and IADLs (Cheung, 2021). Those who reporting having never done an activity were re-coded as not applicable as their baseline function is likely different from the majority of participants. A new function was created to apply these rules to all ADL and IADL variables, as the coding scheme was the same.
+```{r ADL recode function}
+ADLrecode <- function(adlvar){
+  newvar <- case_when(adlvar == "(0) no difficulty" ~ 0,
+                            adlvar == "(4) if volunteered - have never done" ~ NA,
+                            adlvar == "(1) some difficulty" ~ 1,
+                            adlvar == "(2) much difficulty" ~ 2,
+                            adlvar == "	
+(3) unable to do" ~ 3)
+  return(newvar)
+}
+```
+
+The severity of ADL limitation was assessed by constructing a scale as described above using the 7 ADLs assessed.
+```{r severity of ADL need}
+
+analyticNSHAP <- analyticNSHAP %>%
+  # Create severity variables by using the ADLrecode function
+  mutate(block_severity = ADLrecode(WALKBLK))%>%
+  mutate(room_severity = ADLrecode(WALKROOM))%>%
+  mutate(dress_severity = ADLrecode(DRESSING))%>%
+  mutate(bathe_severity = ADLrecode(BATHING))%>%
+  mutate(eat_severity = ADLrecode(EATING))%>%
+  mutate(bed_severity = ADLrecode(INOUTBED))%>%
+  mutate(toilet_severity = ADLrecode(TOILET))%>%
+  # Calculate an overall severity score by summing severity of difficulty for tasks
+  mutate(ADL_severity = block_severity + room_severity + dress_severity + bathe_severity + eat_severity + bed_severity + toilet_severity)
+
+# View a summary
+summary(analyticNSHAP$ADL_severity)
+
+```
+
+The severity of IADL limitation was assessed by constructing a scale as described above using the 8 IADLs assessed.
+```{r severity of IADL need}
+analyticNSHAP <- analyticNSHAP%>%
+  # create severity variables by using the ADLrecode function
+  mutate(meal_severity = ADLrecode(PREPMEAL))%>%
+  mutate(meds_severity = ADLrecode(TAKEMEDS))%>%
+  mutate(money_severity = ADLrecode(MANAGEMONEY))%>%
+  mutate(shop_severity = ADLrecode(SHOPFOOD))%>%
+  mutate(housework_severity = ADLrecode(LIGHTWORK))%>%
+  mutate(phone_severity = ADLrecode(USETELEP))%>%
+  mutate(daydrive_severity = ADLrecode(DRIVED2))%>%
+  mutate(nightdrive_severity = ADLrecode(DRIVEN2))%>%
+  # calculate an overall severity score by summing severity of difficulty for tasks
+  mutate(IADL_severity = meal_severity + meds_severity + money_severity + shop_severity + housework_severity + phone_severity + daydrive_severity + nightdrive_severity)
+
+# view a summary
+summary(analyticNSHAP$IADL_severity)
+```
+
+
+The secondary outcome of interest is the type of functional ability as measured by activities of daily living and instrumental activities of daily living. 
+```{r Variable definition - need ADL assistance}
+analyticNSHAP <- analyticNSHAP %>%
+  # Create dichotomous variables for each ADL to determine need for assistance
+  mutate(block_binary = case_when(WALKBLK == "(0) no difficulty" ~ 0,
+                                  WALKBLK == "(4) if volunteered - have never done" ~ NaN,
+                                  WALKBLK == "(1) some difficulty" |  WALKBLK == "(2) much difficulty" |  WALKBLK == "(3) unable to do" ~ 1))%>%
+  mutate(room_binary = case_when(WALKROOM == "(0) no difficulty" ~ 0,
+                                  WALKROOM == "(4) if volunteered - have never done" ~ NaN,
+                                  WALKROOM == "(1) some difficulty" |  WALKROOM == "(2) much difficulty" |  WALKROOM == "(3) unable to do" ~ 1))%>%
+  mutate(dress_binary = case_when(DRESSING == "(0) no difficulty" ~ 0,
+                                  DRESSING == "(4) if volunteered - have never done" ~ NaN,
+                                  DRESSING == "(1) some difficulty" |  DRESSING == "(2) much difficulty" |  DRESSING == "(3) unable to do" ~ 1))%>%
+  mutate(bathe_binary = case_when(BATHING == "(0) no difficulty" ~ 0,
+                                  BATHING == "(4) if volunteered - have never done" ~ NaN,
+                                  BATHING == "(1) some difficulty" |  BATHING == "(2) much difficulty" |  BATHING == "(3) unable to do" ~ 1))%>%
+  mutate(eat_binary = case_when(EATING == "(0) no difficulty" ~ 0,
+                                  EATING == "(4) if volunteered - have never done" ~ NaN,
+                                  EATING == "(1) some difficulty" |  EATING == "(2) much difficulty" |  EATING == "(3) unable to do" ~ 1))%>%
+  mutate(bed_binary = case_when(INOUTBED == "(0) no difficulty" ~ 0,
+                                  INOUTBED == "(4) if volunteered - have never done" ~ NaN,
+                                  INOUTBED == "(1) some difficulty" |  INOUTBED == "(2) much difficulty" |  INOUTBED == "(3) unable to do" ~ 1))%>%
+  mutate(toilet_binary = case_when(TOILET == "(0) no difficulty" ~ 0,
+                                  TOILET == "(4) if volunteered - have never done" ~ NaN,
+                                  TOILET == "(1) some difficulty" |  TOILET == "(2) much difficulty" |  TOILET == "(3) unable to do" ~ 1))%>%
+  # Calculate an ADL score based on previous guidelines, with 1 point for any difficulty
+  mutate(ADL_score = block_binary + room_binary + dress_binary + bathe_binary + eat_binary + bed_binary + toilet_binary)%>%
+  # Variable for needing any ADL assistance, defined as an ADL score >=1
+  mutate(needADLhelp = case_when(ADL_score >= 1 ~ "Yes",
+                                 ADL_score < 1 ~ "No"))%>%
+  mutate(needADLhelp = factor(needADLhelp, levels = c("No", "Yes"), ordered = T))
+
+# View a summary of the new variables
+summary(analyticNSHAP$ADL_score)
+summary(analyticNSHAP$needADLhelp)
+```
+
+Instrumental activities of daily living scale
+```{r variable definition - IADL scale}
+analyticNSHAP <- analyticNSHAP %>%
+  # Create dichotomous variables for each IADL to determine need for assistance
+  mutate(meal_binary = case_when(PREPMEAL == "(0) no difficulty" ~ 0,
+                                  PREPMEAL == "(4) if volunteered - have never done" ~ NaN,
+                                  PREPMEAL == "(1) some difficulty" |  PREPMEAL == "(2) much difficulty" |  PREPMEAL == "(3) unable to do" ~ 1))%>%
+  mutate(meds_binary  = case_when(TAKEMEDS == "(0) no difficulty" ~ 0,
+                                  TAKEMEDS == "(4) if volunteered - have never done" ~ NaN,
+                                  TAKEMEDS == "(1) some difficulty" |  TAKEMEDS == "(2) much difficulty" |  TAKEMEDS == "(3) unable to do" ~ 1))%>%
+  mutate(money_binary = case_when(MANAGEMONEY == "(0) no difficulty" ~ 0,
+                                  MANAGEMONEY == "(4) if volunteered - have never done" ~ NaN,
+                                  MANAGEMONEY == "(1) some difficulty" |  MANAGEMONEY == "(2) much difficulty" |  MANAGEMONEY == "(3) unable to do" ~ 1))%>%
+  mutate(shopfood_binary  = case_when(SHOPFOOD == "(0) no difficulty" ~ 0,
+                                  SHOPFOOD == "(4) if volunteered - have never done" ~ NaN,
+                                  SHOPFOOD == "(1) some difficulty" |  SHOPFOOD == "(2) much difficulty" |  SHOPFOOD == "(3) unable to do" ~ 1))%>%
+  mutate(housework_binary  = case_when(LIGHTWORK == "(0) no difficulty" ~ 0,
+                                  LIGHTWORK == "(4) if volunteered - have never done" ~ NaN,
+                                  LIGHTWORK == "(1) some difficulty" |  LIGHTWORK == "(2) much difficulty" |  LIGHTWORK == "(3) unable to do" ~ 1))%>%
+  mutate(phone_binary  = case_when(USETELEP == "(0) no difficulty" ~ 0,
+                                  USETELEP == "(4) if volunteered - have never done" ~ NaN,
+                                  USETELEP == "(1) some difficulty" |  USETELEP == "(2) much difficulty" |  USETELEP == "(3) unable to do" ~ 1))%>%
+  mutate(daydrive_binary = case_when(DRIVED2 == "(0) no difficulty" ~ 0,
+                                  DRIVED2 == "(4) if volunteered - have never done" ~ NaN,
+                                  DRIVED2 == "(1) some difficulty" |  DRIVED2 == "(2) much difficulty" |  DRIVED2 == "(3) unable to do" ~ 1))%>%
+  mutate(nightdrive_binary  = case_when(DRIVEN2 == "(0) no difficulty" ~ 0,
+                                  DRIVEN2 == "(4) if volunteered - have never done" ~ NaN,
+                                  DRIVEN2 == "(1) some difficulty" |  DRIVEN2 == "(2) much difficulty" |  DRIVEN2 == "(3) unable to do" ~ 1))%>%
+  # Create a scored variable as the sum of the binary variables
+  mutate(IADL_score = meal_binary + meds_binary + money_binary + shopfood_binary + housework_binary + phone_binary + daydrive_binary + nightdrive_binary) %>%
+  # Create a binary variable for needing any IADL help overall
+  mutate(IADL_needHelp = case_when(IADL_score >= 1 ~ "Yes",
+                                  IADL_score <1 ~ "No"))%>%
+  mutate(IADL_needHelp = factor(IADL_needHelp, levels = c("No", "Yes"), ordered = T))
+
+# View a summary of the new variables
+summary(analyticNSHAP$IADL_score)
+summary(analyticNSHAP$IADL_needHelp)
+```
+
+Functional ability can be broadly defined by both ADLs and IADLs. A composite score is created by summing the ADL and IADL score.
+```{r Composite ADL IADL Score}
+analyticNSHAP <- analyticNSHAP %>%
+  # Sum the ADL and IADL scores
+  mutate(compADL_score = ADL_score + IADL_score)%>%
+  # Create composite ordinal variable
+  mutate(compADL_ordinal = case_when(needADLhelp == "No" & IADL_needHelp == "No" ~ "Independent",
+                                     needADLhelp == "No" & IADL_needHelp == "Yes" ~ "IADL Help Only",
+                                     needADLhelp == "Yes" & IADL_needHelp == "No" ~ "ADL Help Only",
+                                     needADLhelp == "Yes" & IADL_needHelp == "Yes" ~ "Both ADL and IADL Help"))%>%
+  mutate(compADL_ordinal = factor(compADL_ordinal, levels = c("Independent", "IADL Help Only", "ADL Help Only", "Both ADL and IADL Help"), ordered = T))
+
+# View summary
+summary(analyticNSHAP$compADL_score)
+summary(analyticNSHAP$compADL_ordinal)
+```
+
+ADL difficulty and IADL difficulty can be assessed using a linear scale, where the reported difficulty for each activity wihtin the domain is summed. 
+
+
+Frequent depressive symptoms is designated as score >= 9. Scoring was conducted following the provided guidelines. (Payne, 2014)
+```{r Scoring for frequent depressive symptoms}
+analyticNSHAP <- analyticNSHAP %>%
+  # Assign scores to each item
+  mutate(noteat = case_when(noteat == 1 ~ 0,
+                            noteat == 2 ~ 1, 
+                            noteat == 3 | noteat == 4 ~ 2))%>%
+  mutate(feltdep = case_when(feltdep == 1 ~ 0,
+                            feltdep == 2 ~ 1, 
+                            feltdep == 3 | feltdep == 4 ~ 2))%>%
+  mutate(felteff = case_when(felteff == 1 ~ 0,
+                            felteff == 2 ~ 1, 
+                            felteff == 3 | felteff == 4 ~ 2))%>%
+  mutate(nosleep = case_when(nosleep == 1 ~ 0,
+                            nosleep == 2 ~ 1, 
+                            nosleep == 3 | nosleep == 4 ~ 2))%>%
+  mutate(washappy = case_when(washappy == 1 ~ 2, 
+                              washappy == 2 ~ 1,
+                              washappy == 3 | washappy == 4 ~ 0))%>%
+  mutate(waslonely = case_when(waslonely == 1 ~ 0,
+                            waslonely == 2 ~ 1, 
+                            waslonely == 3 | waslonely == 4 ~ 2))%>%
+  mutate(unfriend = case_when(unfriend == 1 ~ 0,
+                            unfriend == 2 ~ 1, 
+                            unfriend == 3 | unfriend == 4 ~ 2))%>%
+  mutate(enjlife = case_when(enjlife == 1 ~ 0,
+                            enjlife == 2 ~ 1, 
+                            enjlife == 3 | enjlife == 4 ~ 2))%>%
+  mutate(feltsad = case_when(feltsad == 1 ~ 0,
+                            feltsad == 2 ~ 1, 
+                            feltsad == 3 | feltsad == 4 ~ 2))%>%
+  mutate(disliked = case_when(disliked == 1 ~ 0,
+                            disliked == 2 ~ 1, 
+                            disliked == 3 | disliked == 4 ~ 2))%>%
+  mutate(notgetgo = case_when(notgetgo == 1 ~ 0,
+                            notgetgo == 2 ~ 1, 
+                            notgetgo == 3 | notgetgo == 4 ~ 2))%>%
+# Create a total score variable based on the sum
+  mutate(fds_score = noteat + feltdep + felteff + nosleep + washappy + waslonely + unfriend + enjlife + feltsad + disliked + notgetgo)%>%
+  # Create a binary variable for the cutoff
+  mutate(fds_binary = case_when(fds_score >= 9 ~ "Yes",
+                                fds_score <= 8 ~ "No"))%>%
+  mutate(fds_binary = factor(fds_binary, levels = c("No", "Yes"), ordered = T))
+
+# View a summary of the new variable
+summary(analyticNSHAP$fds_score)
+summary(analyticNSHAP$fds_binary)
+```
+
+Frequent anxiety symptoms is designated as score >= 8. Scoring was conducted following the provided guidelines. (Payne, 2014)
+```{r Scoring for frequent anxiety symptoms}
+analyticNSHAP <- analyticNSHAP %>%
+  # Assign scores to each item
+  mutate(felttens = case_when(felttens == 1 ~ 0, 
+                              felttens == 2 ~ 1, 
+                              felttens == 3 ~ 2,
+                              felttens == 4 ~ 3))%>%
+  mutate(fright = case_when(fright == 1 ~ 0, 
+                              fright == 2 ~ 1, 
+                              fright == 3 ~ 2,
+                              fright == 4 ~ 3))%>%
+  mutate(worry = case_when(worry == 1 ~ 0, 
+                              worry == 2 ~ 1, 
+                              worry == 3 ~ 2,
+                              worry == 4 ~ 3))%>%
+  mutate(relaxed = case_when(relaxed == 1 ~ 3,
+                             relaxed == 2 ~ 2,
+                             relaxed == 3 ~ 1,
+                             relaxed == 4 ~ 0))%>%
+  mutate(butterfly = case_when(butterfly == 1 ~ 0, 
+                              butterfly == 2 ~ 1, 
+                              butterfly == 3 ~ 2,
+                              butterfly == 4 ~ 3))%>%
+  mutate(restless = case_when(restless == 1 ~ 0, 
+                              restless == 2 ~ 1, 
+                              restless == 3 ~ 2,
+                              restless == 4 ~ 3))%>%
+  mutate(panic = case_when(panic == 1 ~ 0, 
+                              panic == 2 ~ 1, 
+                              panic == 3 ~ 2,
+                              panic == 4 ~ 3))%>%
+  # Create a score variable based on the sum
+  mutate(fas_score = felttens + fright + worry + relaxed + butterfly + restless + panic)%>%
+  # Create a binary variable based on the cutoff (>=8)
+  mutate(fas_binary = case_when(fas_score >=8 ~ "Yes",
+                                fas_score <=7 ~ "No"))%>%
+  mutate(fas_binary = factor(fas_binary, levels = c("No", "Yes"), ordered = T))
+
+# View a summary of the newly created variables
+summary(analyticNSHAP$fas_score)
+summary(analyticNSHAP$fas_binary)
+```
+
+Anxiety and depressive symptoms can co-occur and be more debilitating than either set of symptoms on its own. A composite mental health variable was created to capture this information, using the Frequent Depressive Symptoms and Frequent Anxiety Symptoms scales provided. This requires a complete case approach, as the FAS scale was administered in the leave-behind questionnaire and as such has a lower response rate. Those who did not respond to the FDS and/or FAS questionnaire will be removed from the study sample. 
+```{r Composite Mental Health}
+analyticNSHAP <- analyticNSHAP %>%
+  # Filter out those with NA responses to FAS or FDS
+  filter(!is.na(fas_binary) & !is.na(fds_binary))%>%
+  mutate(compMenHealth = case_when(fas_binary == "Yes" & fds_binary == "No" ~ "Frequent Anxiety Symptoms",
+                                    fas_binary == "No" & fds_binary == "Yes" ~ "Frequent Depressive Symptoms",
+                                    fas_binary == "No" & fds_binary == "No" ~ "Neither Anxiety nor Depressive Symptoms",
+                                    fas_binary == "Yes" & fds_binary == "Yes" ~ "Frequent Anxiety & Depressive Symptoms"))%>%
+  mutate(compMenHealth = factor(compMenHealth, levels = c("Neither Anxiety nor Depressive Symptoms",
+                                                       "Frequent Depressive Symptoms",
+                                                       "Frequent Anxiety Symptoms",
+                                                       "Frequent Anxiety & Depressive Symptoms"), 
+                               ordered = T, 
+                               labels =  c("Neither Anxiety nor Depressive Symptoms",
+                                                       "Frequent Depressive Symptoms",
+                                                       "Frequent Anxiety Symptoms",
+                                                       "Frequent Anxiety & Depressive Symptoms")))
+
+# View a summary of the variable
+summary(analyticNSHAP$compMenHealth)
+```
+Survey guidelines propose a binary classification of marital status - unpartnered/unmarried and partnered/married (Waite 2021). The original variable is recoded accordingly.
+```{r Dichotomize partnership}
+analyticNSHAP <- analyticNSHAP %>%
+  # Create a binary variable and set as an ordered factor
+  mutate(MARITLST = case_when(
+    MARITLST %in% "(1) married" ~ "partnered/married",
+    MARITLST %in% "(2) living with a partner" ~ "partnered/married",
+    MARITLST %in% "(3) separated" ~ "unpartnered/unmarried",
+    MARITLST %in% "(4) divorced" ~ "unpartnered/unmarried",
+    MARITLST %in% "(6) never married" ~ "unpartnered/unmarried",
+    is.na(MARITLST) ~ as.character(MARITLST)  # Handle NA values and keep them unchanged
+  )) %>%
+  mutate(MARITLST = factor(MARITLST, levels = c("unpartnered/unmarried", "partnered/married"), ordered = T))
+
+# summary
+summary(analyticNSHAP$MARITLST)
+```
+
+AS complete case analysis is planned for the independent and dependent variables, an indicator variable is created to designate individuals who will be included. This will facilitate rudimentary missing data analysis.
+```{r inclusion indicator}
+analyticNSHAP <- analyticNSHAP %>%
+  mutate(includeIndicator = ifelse(!is.na(compMenHealth) & !is.na(ADL_severity) & !is.na(IADL_severity), "Yes", "No"))%>%
+  mutate(includeIndicator = factor(includeIndicator, levels = c("Yes", "No")))
+
+summary(analyticNSHAP$includeIndicator)
+```
+
+
+The NHSAP is a weighted survey with the following parameters:
+Individual weight - WEIGHT_ADJ
+Strata = STRATUM
+PSU = CLUSTER
+
+A full survey design object will be created and then subset to the sample of interest for further analysis. The sample for this study must have a response to the composite mental health variable, ADL score and IADL score. 
+```{r Create Survey Object}
+# Create a survey design object for the entire data set
+fullDesign <- svydesign(id    = ~CLUSTER,
+                          strata  = ~STRATUM,
+                          weights = ~WEIGHT_ADJ,
+                          nest    = TRUE,
+                          data    = analyticNSHAP)
+
+# Create a subset object with only those who have data on mood, ADLs, and IADLS
+analyticDesign <- subset(fullDesign, !is.na(compMenHealth), !is.na(ADL_severity), !is.na(IADL_severity))
+
+# View a summary
+summary(analyticDesign)
+```
+Count the number of cases used
+```{r case count}
+analyticNSHAP %>%
+  filter(!is.na(compMenHealth), !is.na(ADL_severity), !is.na(IADL_severity))%>%
+  count()
+
+count(analyticNSHAP)
+```
+There are 1907 cases with data for all of the following variables - depressive symptoms, anxiety symptoms, ADL severity, and IADL severity.
+
+Exploratory data analysis - test all continuous variables in the data for normality using the weighted survey object.
+Continuous variables include age. While comorbidities (comorbid), ADL score, IADL score,  and compADL_score are also numeric, these are count data and variation will be best summarized with a mean and sd for descriptive purposes.
+```{r EDA}
+# Age histogram
+gghistweight_svy(analyticDesign, AGE)+
+  labs(title = "Age Distribution (Weighted)")
+
+# Comorbidity count
+gghistweight_svy(analyticDesign, comorbid)+
+  labs(title = "Count of Comorbidities (Weighted)")
+
+# ADL severity
+gghistweight_svy(analyticDesign, ADL_severity)+
+  labs(title = "ADL Severity (Weighted)")
+
+# ADL severity by mental health
+ggboxweight_svy(analyticDesign, ADL_severity)+
+  labs(title = "ADL Severity (Weighted)")+
+  facet_grid(rows = "compMenHealth")+
+  theme_minimal()
+
+# IADL severity
+gghistweight_svy(analyticDesign, IADL_severity)+
+  labs(title = "IADL Severity (Weighted)")
+
+# IADL severity by mental health
+ggboxweight_svy(analyticDesign, IADL_severity)+
+  labs(title = "IADL Severity (Weighted)")+
+  facet_grid(rows = "compMenHealth")+
+  theme_minimal()
+
+# ADL Score
+gghistweight_svy(analyticDesign, ADL_score)+
+  labs(title = "ADL Score (Weighted)")
+
+# IADL Score
+gghistweight_svy(analyticDesign, IADL_score)+
+  labs(title = "IADL Score (Weighted)")
+
+# CompADL score
+gghistweight_svy(analyticDesign, compADL_score)+
+  labs(title = "Summed ADL and IADL Score (Weighted)")
+```
+For the primary outcome - Neither ADL nor IADL severity demonstrates a normal distribution.
+
+For the secondary outcome - As a large proportion of the ADL and IADL responses are 0 (i.e. individuals requiring help with neither ADLs nor IADLs) and the data is counts, a zero-inflated poisson regression model will be used. 
+
+Table one - comparison of covariates stratified by mental health status (none, dep, anx, both)
+The following variables were evaluate as non-normal and analyzed as such: age
+```{r table one}
+# Create a vector of table one variables
+table1vars <- c("AGE", "GENDER", "ETHGRP", "EDUC", "MARITLST", "PHYSHLTH", "comorbid", "HEARN_RECODE", "OTHERINSUR", "LACKMEDCARE", "LACKPRESMED")
+
+# Create table of demographic information by mental health status using only the percentages
+DemographicsTableOne <- svyCreateTableOne(data = analyticDesign, 
+                                       strata = "compMenHealth",
+                                       vars = table1vars, 
+                                       includeNA = F, 
+                                       addOverall = T)
+
+# View the results
+TableOneExport <- print(DemographicsTableOne, 
+                        showAllLevels = T, 
+                        missing = T, 
+                        format = "p",
+                        varLabels = T,
+                        nonnormal = "AGE")
+```
+```{r export table one}
+write.csv(TableOneExport, "WrittenExam_Table1.csv")
+```
+
+Predictors are significant with the exception of age. There may be relationships between the predictors, as several measure similar information (for instance, self-assessed physical health and the count of comorbidities). If predictors are not independent, they likely present redundant information and one representative variable should be carried through adjusted models.
+```{r EDA - correlations in predictors}
+# significance of self-assessed physical health and comorbidities - Kruskal Wallis
+# Box plot of comorbidities by each group
+ggboxweight_svy(analyticDesign, comorbid)+
+  facet_grid(rows = "PHYSHLTH")
+
+svyranktest(comorbid ~ PHYSHLTH,
+            analyticDesign,
+            method = "KruskalWallis")
+
+
+```
+The KruskalWallis test was significance for the comparison of comorbidity count across self-rated physical health groups. Thus, only one of the two variables should be included. As number of comorbidities is a standard measure and more objectively determined, it will be included. Self-rated physical health is likely also related to anxiety and depressive symptoms, as the perception of health may be affected by presence of frequent anxiety and depressive symptoms.
+
+Do not have same variables in round 2 for lackpresmed and lackmedcare
+Table two - comparison of primary and secondary outcomes stratified by mental health status (none, dep, anx, both)
+```{r table 2}
+table2vars <- c("ADL_severity", "IADL_severity", "ADL_score", "IADL_score", "compADL_score", "compADL_ordinal")
+
+# Create tableone object for table 2 outcomes
+OutcomesTableTwo <- svyCreateTableOne(data = analyticDesign, 
+                                       strata = "compMenHealth",
+                                       vars = table2vars, 
+                                       includeNA = F, 
+                                       addOverall = T)
+
+# View the results
+TableTwoExport <- print(OutcomesTableTwo, 
+                        showAllLevels = T, 
+                        missing = T, 
+                        format = "p",
+                        varLabels = T)#,
+                        #nonnormal = c("ADL_severity", "IADL_severity"))
+```
+
+```{r export table 2}
+write.csv(TableTwoExport, "WrittenExam_TableTwo.csv")
+```
+
+Missing data analysis - a table is created to compare the individuals who have data for depression, anxiety, ADL, and IADL severity with those who lack data for any of these variables
+```{r missing data analysis}
+# Create a list of variable
+MDAvars <- c("AGE", "GENDER", "ETHGRP", "EDUC", "MARITLST", "PHYSHLTH", "comorbid", "HEARN_RECODE", "OTHERINSUR", "LACKMEDCARE", "LACKPRESMED", "ADL_severity", "IADL_severity", "ADL_score", "IADL_score")
+
+# Create a stratified table
+MDATable <- svyCreateTableOne(data = fullDesign, 
+                              strata = "includeIndicator",
+                              vars = MDAvars,
+                              includeNA = F)
+                             # addOverall = T)
+
+# View the results
+MDATableExport <- print(MDATable, 
+                        showAllLevels = F, 
+                        missing = T, 
+                        format = "p",
+                        varLabels = T)
+
+# Export the results
+write.csv(MDATableExport, "WrittenExams_CrudeMissingData.csv")
+```
+
+
+For the primary outcome - separate weighted linear regresison models will be fit for severity of difficulty with ADLs and IADLs. Unadjusted models with the composite mental health variables as the sole predictor and adjusted models accounting for predictors will be fit and compared. Odds ratios will be calculated along with significance of the coefficients. 
+Adjusted models will include significantly different covariates between mental health groups, accounting for results of testing for relationship between predictors done previously (i.e. both comorbidity count and self-rated physical health were significantly different but the two were demonstrated to be related by the KruskalWallis test, thus only comorbidity count is included). These variables include: AGE, GENDER, EDUC, MARITLST, comorbid, HEARN_RECODE, ANYPRIVATEINS
+```{r linear regresison - severity of ADL difficulty}
+# Unadjusted model
+mod.ADL_severity <- svyglm(ADL_severity ~ compMenHealth, design = analyticDesign)
+mod.ADL_severity
+
+mod.ADL_severity_summary <- summary(mod.ADL_severity)
+
+# Adjusted model
+mod.ADL_severity_adj <- svyglm(ADL_severity ~ compMenHealth + AGE + GENDER + EDUC + MARITLST + 
+                          comorbid + HEARN_RECODE + OTHERINSUR,
+                          design = analyticDesign)
+
+mod.ADL_severity_adj_summary <- summary(mod.ADL_severity_adj)
+
+# Calculate 95% CI for OR - not appropriate, need beta estimates
+#ADL_severityCI <- exp(confint(mod.ADL_severity))
+#ADL_severity_adjCI <- exp(confint(mod.ADL_severity_adj))
+
+# Calculate odds ratios
+# Point estimates
+#ADL_severityOR <- exp(coef(mod.ADL_severity))
+#ADL_severity_adjOR <- exp(coef(mod.ADL_severity_adj))
+
+```
+
+```{r linear regression - severity of IADL difficulty}
+# Unadjusted model
+mod.IADL_severity <- svyglm(IADL_severity ~ compMenHealth, design = analyticDesign)
+mod.IADL_severity
+
+mod.IADL_severity_summary <- summary(mod.IADL_severity)
+
+# Adjusted model
+mod.IADL_severity_adj <- svyglm(IADL_severity ~ compMenHealth + AGE + GENDER + EDUC + MARITLST + 
+                          comorbid + HEARN_RECODE + OTHERINSUR,
+                          design = analyticDesign)
+
+mod.IADL_severity_adj_summary <- summary(mod.IADL_severity_adj)
+
+# Calculate odds ratios - not appropriate, need beta estimates
+#IADL_severityOR <- exp(coef(mod.IADL_severity))
+#IADL_severity_adjOR <- exp(coef(mod.IADL_severity_adj))
+
+# Calculate 95% CI
+#IADL_severityCI <- exp(confint(mod.IADL_severity))
+#IADL_severity_adjCI <- exp(confint(mod.IADL_severity_adj))
+```
+
+```{r export linear regression results}
+# Unadjusted model
+ADLseverity_unadjustedTbl <- data.frame(ADLBeta = mod.ADL_severity_summary$coefficients[,1], 
+                                        ADL_StdError = mod.ADL_severity_summary$coefficients[,2],
+                                        ADL_t = mod.ADL_severity_summary$coefficients[,3],
+                                        ADLp = mod.ADL_severity_summary$coefficients[,4], 
+                                        IADLBeta = mod.IADL_severity_summary$coefficients[,1],
+                                        IADL_StdError = mod.IADL_severity_summary$coefficients[,2],
+                                        IADL_t = mod.IADL_severity_summary$coefficients[,3],
+                                        IADLp = mod.IADL_severity_summary$coefficients[,4])
+
+# Adjusted Model
+ADLseverity_AdjustedTbl <- data.frame(ADLBeta = mod.ADL_severity_adj_summary$coefficients[,1], 
+                                      ADL_StdError = mod.ADL_severity_adj_summary$coefficients[,2],
+                                        ADL_t = mod.ADL_severity_adj_summary$coefficients[,3],
+                                        ADLp = mod.ADL_severity_adj_summary$coefficients[,4], 
+                                        IADLBeta = mod.IADL_severity_adj_summary$coefficients[,1], 
+                                      IADL_StdError = mod.IADL_severity_adj_summary$coefficients[,2],
+                                        IADL_t = mod.IADL_severity_adj_summary$coefficients[,3],
+                                        IADLp = mod.IADL_severity_adj_summary$coefficients[,4])
+
+# Export tables
+write.csv(ADLseverity_unadjustedTbl, "WrittenExams_UnadjustedLinRegADLSeverity.csv")
+write.csv(ADLseverity_AdjustedTbl, "WrittenExams_AdjustedADLSeverity.csv")
+```
+
+As the AIC for the adjusted models is significantly lower than the unadjusted models, only the adjusted models will be used going forward.
+
+Check assumptions for linear regression:
+1. Observations are independent - assumed met
+2. The Outcome is continuous - met (interval scale from 0-21)
+3. Linearity - relationship between outcome and each continuous predictor is linear
+      This should be tested for Age and number of comorbidities
+4. Homoscedasticity - 
+5. Independence of residuals
+6. Normality of residuals
+7. No perfect multicollinearity - this can be assessed with VIF, using the cutoff of GVIF^(1/2*df))<2.5
+```{r lin reg assumption}
+
+# Check for multicollinearity
+car::vif(mod.ADL_severity_adj)
+car::vif(mod.IADL_severity_adj)
+```
+
+Calculate model significance for linear regression models
+could look at r-squared, unclear whether this is warranted with survey data
+```{r lin reg significance}
+#trying Jtools summ function
+jtools::summ(mod.ADL_severity_adj, confint = TRUE, digits = 3)
+#jtools::export_summs(mod.ADL_severity_adj)
+#jtools::plot_summs(mod.ADL_severity)
+
+#jtools::summ(mod.ADL_severity)
+
+jtools::summ(mod.IADL_severity_adj, confint = TRUE, digits = 3)
+```
+Visualization of the multivariate linear regression model to use in poster, where beta estimates and 95% confidence intervals are plotted.
+```{r linear regression visualization}
+# create a vector of labels
+plotLabels <- c("Covered by Private Insurance", "Income: $100k or Greater", "Income: $50,000 - $99,999", "Income: $25,000 - $49,999", "Number of Comorbidities",   "Partnered/Married", "Bachelor's Degree or Higher", "Some College", "High School Degree or Equivalent","Female", "Age", "Frequent Anxiety & Depressive Symptoms",  "Frequent Anxiety Symptoms", "Frequent Depressive Symptoms")
+
+# Create a plot of the beta estimates using plot_summs from jtools
+LinRegPlot <- plot_summs(mod.ADL_severity_adj, mod.IADL_severity_adj,
+                   model.names = c("ADL Severity", "IADL Severity"), 
+                   colors = "CUD Bright",
+                   point.size = 12)+
+                theme(text = element_text(size = 20, family = "Arial", colour = "black"),
+                      axis.text.y = element_text(size = 20, family = "Arial", colour = "black"))+
+                scale_y_discrete(labels = plotLabels)
+# Save the plot
+ggsave("LinRegForestPlot.png", LinRegPlot, width = 18, height = 10)
+```
